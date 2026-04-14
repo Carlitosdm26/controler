@@ -3,7 +3,7 @@ import sqlite3
 import time
 from datetime import datetime
 
-DB_PATH = "../data/prices.db"
+DB_PATH = "data/prices.db"
 
 def create_table():
     conn = sqlite3.connect(DB_PATH)
