@@ -35,7 +35,7 @@ def create_table():
 def fetch_prices():
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {
-        "ids": "bitcoin,ethereum",
+        "ids": "bitcoin,ethereum,bitcoin-cash",
         "vs_currencies": "eur"
     }
 
@@ -44,10 +44,11 @@ def fetch_prices():
 
     prices = {
         "bitcoin": data["bitcoin"]["eur"],
-        "ethereum": data["ethereum"]["eur"]
+        "ethereum": data["ethereum"]["eur"],
+        "bitcoin-cash": data["bitcoin-cash"]["eur"]
     }
 
-    print("Precios obtenidos:", prices)
+    #print("Precios obtenidos:", prices)
     return prices
 
 
@@ -76,7 +77,7 @@ def main():
         try:
             prices = fetch_prices()
             save_prices(prices)
-            print("Guardado correctamente\n")
+            #print("Guardado correctamente\n")
 
         except Exception as e:
             print("Error:", e)
