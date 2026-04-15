@@ -21,12 +21,12 @@ def create_table():
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS crypto_prices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        price REAL,
-        timestamp TEXT
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100),
+        price FLOAT,
+        timestamp DATETIME
     )
-    """)
+""")
 
     conn.commit()
     conn.close()
@@ -59,7 +59,7 @@ def save_prices(prices):
 
     for name, price in prices.items():
         cursor.execute(
-            "INSERT INTO crypto_prices (name, price, timestamp) VALUES (?, ?, ?)",
+            "INSERT INTO crypto_prices (name, price, timestamp) VALUES (%s, %s, %s)",
             (name, price, timestamp)
         )
 
