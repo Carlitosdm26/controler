@@ -55,7 +55,7 @@ def save_prices(prices):
     conn = connect()
     cursor = conn.cursor()
 
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
 
     for name, price in prices.items():
         cursor.execute(
@@ -81,8 +81,8 @@ def main():
         except Exception as e:
             print("Error:", e)
 
-        # esperar 1 hora (3600 segundos)
-        time.sleep(3600)
+        #Se ejecuta cada 60 segundos.
+        time.sleep(60)
 
 
 if __name__ == "__main__":
