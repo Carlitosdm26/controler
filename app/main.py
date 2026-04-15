@@ -2,10 +2,10 @@ import requests
 import mysql.connector
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
+madrid = ZoneInfo("Europe/Madrid")
 
-
-DB_PATH = "data/prices.db"
 
 def connect():
     return mysql.connector.connect(
@@ -56,7 +56,7 @@ def save_prices(prices):
     conn = connect()
     cursor = conn.cursor()
 
-    timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    timestamp = datetime.now(madrid).strftime("%d-%m-%Y %H:%M:%S")
 
     for name, price in prices.items():
         cursor.execute(
