@@ -35,7 +35,7 @@ def create_table():
 def fetch_prices():
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {
-        "ids": "bitcoin,ethereum",
+        "ids": "bitcoin,ethereum,bitcoin-cash",
         "vs_currencies": "eur"
     }
 
@@ -44,10 +44,11 @@ def fetch_prices():
 
     prices = {
         "bitcoin": data["bitcoin"]["eur"],
-        "ethereum": data["ethereum"]["eur"]
+        "ethereum": data["ethereum"]["eur"],
+        "bitcoin-cash": data["bitcoin-cash"]["eur"]
     }
 
-    print("Precios obtenidos:", prices)
+    #print("Precios obtenidos:", prices)
     return prices
 
 
@@ -55,7 +56,7 @@ def save_prices(prices):
     conn = connect()
     cursor = conn.cursor()
 
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
 
     for name, price in prices.items():
         cursor.execute(
@@ -76,13 +77,13 @@ def main():
         try:
             prices = fetch_prices()
             save_prices(prices)
-            print("Guardado correctamente\n")
+            #print("Guardado correctamente\n")
 
         except Exception as e:
             print("Error:", e)
 
-        # esperar 1 hora (3600 segundos)
-        time.sleep(3600)
+        #Se ejecuta cada 60 segundos.
+        time.sleep(60)
 
 
 if __name__ == "__main__":
