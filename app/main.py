@@ -35,14 +35,6 @@ def fetch_prices():
     prices = {
         "bitcoin": data["bitcoin"]["eur"],
         "ethereum": data["ethereum"]["eur"]
-        "tether": data["tether"]["eur"]
-        "ripple": data["ripple"]["eur"]
-        "binancecoin": data["binancecoin"]["eur"]
-        "usd-coin": data["usd-coin"]["eur"]
-        "solana": data["solana"]["eur"]
-        "tron": data["tron"]["eur"]
-        "figure-heloc": data["figure-heloc"]["eur"]
-        "dogecoin": data["dogecoin"]["eur"]
     }
 
     print("Precios obtenidos:", prices)
