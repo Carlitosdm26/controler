@@ -1,12 +1,22 @@
 import requests
-import sqlite3
+import mysql.connector
 import time
 from datetime import datetime
 
+
+
 DB_PATH = "data/prices.db"
 
+def connect():
+    return mysql.connector.connect(
+        host="sql7.freesqldatabase.com",
+        user="sql7823353",
+        password="uQe3haYPKV",
+        database="sql7823353"
+    )
+
 def create_table():
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -42,7 +52,7 @@ def fetch_prices():
 
 
 def save_prices(prices):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     cursor = conn.cursor()
 
     timestamp = datetime.now().isoformat()
