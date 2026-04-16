@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 zhoraria = ZoneInfo("Europe/Madrid")
-
+WITHELIST = {"bitcoin-cash"}
 ALERT_THRESHOLDS = {
     "bitcoin": {
         "max": 70000,
@@ -16,8 +16,8 @@ ALERT_THRESHOLDS = {
         "min": 3000
     },
     "bitcoin-cash": {
-        "max": 300,
-        "min": 200
+        "max": 380,
+        "min": 360
     }
 }
 
@@ -25,9 +25,9 @@ ALERT_THRESHOLDS = {
 def connect():
     return mysql.connector.connect(
         host="sql7.freesqldatabase.com",
-        user="sql7823353",
-        password="uQe3haYPKV",
-        database="sql7823353"
+        user="sql7823404",
+        password="RzwPNt58x2",
+        database="sql7823404"
     )
 
 def create_table():
@@ -39,7 +39,7 @@ def create_table():
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(100),
         price FLOAT,
-        timestamp DATETIME
+        timestamp TEXT
     )
 """)
 
@@ -86,20 +86,38 @@ def save_prices(prices):
 def alerts(prices):
     print ("Procesando alertas...")
 
+    TELEGRAM_TOKEN = "8316435201:AAE-Pvz6b1k8MKuSx9xlc2X7Me6WtazJP-w"
+    CHAT_ID = "7550716847"
+
+    def send_telegram(msg):
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={
+            "chat_id": CHAT_ID,
+            "text": msg
+        })
+
+
     for name, price in prices.items():
         config = ALERT_THRESHOLDS.get(name)
 
         if config is None:
             continue
 
+        if name not in WITHELIST:
+            continue
+
         min_price = config["min"]
         max_price = config["max"]
 
         if price > max_price:
-            print(f"🚀 {name} ha superado el MÁXIMO ({max_price}) → {price}")
+            msg = f"🚀 {name} ha superado el MÁXIMO ({max_price}) → {price}"
+            print(msg)
+            send_telegram(msg)
 
         elif price < min_price:
-            print(f"📉 {name} ha bajado del MÍNIMO ({min_price}) → {price}")
+            msg = f"📉 {name} ha bajado del MÍNIMO ({min_price}) → {price}"
+            print(msg)
+            send_telegram(msg)
 
 
 
@@ -114,13 +132,13 @@ def main():
             prices = fetch_prices()
             save_prices(prices)
             alerts(prices)
-            #print("Guardado correctamente\n")
+            print("Guardado correctamente\n")
 
         except Exception as e:
             print("Error:", e)
 
-        #Se ejecuta cada 60 segundos.
-        time.sleep(60)
+        #Se ejecuta cada 30 segundos.
+        time.sleep(30)
 
 
 if __name__ == "__main__":
