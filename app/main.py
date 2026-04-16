@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-madrid = ZoneInfo("Europe/Madrid")
+zhoraria = ZoneInfo("Europe/Madrid")
 
 
 def connect():
@@ -56,7 +56,7 @@ def save_prices(prices):
     conn = connect()
     cursor = conn.cursor()
 
-    timestamp = datetime.now(madrid).strftime("%d-%m-%Y %H:%M:%S")
+    timestamp = datetime.now(zhoraria).strftime("%d-%m-%Y %H:%M:%S")
 
     for name, price in prices.items():
         cursor.execute(
