@@ -1,6 +1,7 @@
 import requests
 import mysql.connector
 import time
+import schedule
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -39,7 +40,7 @@ def create_table():
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(100),
         price FLOAT,
-        timestamp TEXT
+        timestamp TIMESTAMP
     )
 """)
 
@@ -71,7 +72,7 @@ def save_prices(prices):
     conn = connect()
     cursor = conn.cursor()
 
-    timestamp = datetime.now(zhoraria).strftime("%d-%m-%Y %H:%M:%S")
+    timestamp = datetime.now(zhoraria)
 
     for name, price in prices.items():
         cursor.execute(
@@ -119,6 +120,17 @@ def alerts(prices):
             print(msg)
             send_telegram(msg)
 
+def job():
+    try:
+        prices = fetch_prices()
+        save_prices(prices)
+        alerts(prices)
+        print("Guardado correctamente\n")
+
+    except Exception as e:
+        print("Error:", e)
+
+
 
 
 
@@ -126,19 +138,11 @@ def main():
     print("Iniciando tracker...")
 
     create_table()
-
+    #schedule.every(1).minutes.do(job)
+    schedule.every(30).seconds.do(job)
     while True:
-        try:
-            prices = fetch_prices()
-            save_prices(prices)
-            alerts(prices)
-            print("Guardado correctamente\n")
-
-        except Exception as e:
-            print("Error:", e)
-
-        #Se ejecuta cada 30 segundos.
-        time.sleep(30)
+        schedule.run_pending()
+        time.sleep(1)
 
 
 if __name__ == "__main__":
