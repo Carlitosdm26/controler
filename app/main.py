@@ -72,14 +72,15 @@ def fetch_prices():
 def save_prices(prices):
     conn = connect()
     cursor = conn.cursor()
-
     timestamp = datetime.now(zhoraria)
+    create_table()
 
     for name, price in prices.items():
         cursor.execute(
             "INSERT INTO crypto_prices (name, price, timestamp) VALUES (%s, %s, %s)",
             (name, price, timestamp)
         )
+    print("Proceso de guardado en BDD: OK")
 
     conn.commit()
     conn.close()
@@ -92,7 +93,7 @@ def alerts(prices):
     CHAT_ID = "7550716847"
 
     ACCOUNT_SID = "AC450ca4b09273b6996bff3cd5bf2c9e9e"
-    AUTH_TOKEN = "2b8f6820edf0e22f97a51786e12898a0"
+    AUTH_TOKEN = "d497e18e5f951c54d044d7c51f63429a"
     TWILIO_NUMBER = "+12182314043"   # número de Twilio
     YOUR_NUMBER = "+34645913563"   # tu móvil
 
@@ -104,13 +105,15 @@ def alerts(prices):
             "chat_id": CHAT_ID,
             "text": msg
         })
+        print("Telegram enviado:", msg)
 
-def send_sms(msg):
-    client.messages.create(
-        body=msg,
-        from_=TWILIO_NUMBER,
-        to=YOUR_NUMBER
-    )
+    def send_sms(msg):
+        client.messages.create(
+            body=msg,
+            from_=TWILIO_NUMBER,
+            to=YOUR_NUMBER
+        )
+        print("SMS enviado:", msg)
 
 
     for name, price in prices.items():
@@ -127,22 +130,22 @@ def send_sms(msg):
 
         if price > max_price:
             msg = f"🚀 {name} ha superado el MÁXIMO ({max_price}) → {price}"
-            print(msg)
-            send_sms(msg)
-            #send_telegram(msg)
+            #print(msg)
+            #send_sms(msg)
+            send_telegram(msg)
 
         elif price < min_price:
             msg = f"📉 {name} ha bajado del MÍNIMO ({min_price}) → {price}"
-            print(msg)
-            send_sms(msg)
-            #send_telegram(msg)
+            #print(msg)
+            #send_sms(msg)
+            send_telegram(msg)
 
 def job():
+    print("\n")
     try:
         prices = fetch_prices()
         save_prices(prices)
         alerts(prices)
-        print("Guardado correctamente\n")
 
     except Exception as e:
         print("Error:", e)
@@ -153,8 +156,7 @@ def job():
 
 def main():
     print("Iniciando tracker...")
-
-    create_table()
+    job()
     #schedule.every(1).minutes.do(job)
     schedule.every(30).seconds.do(job)
     while True:
