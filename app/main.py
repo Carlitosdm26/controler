@@ -10,9 +10,9 @@ zhoraria = ZoneInfo("Europe/Madrid")
 def connect():
     return mysql.connector.connect(
         host="sql7.freesqldatabase.com",
-        user="sql7823353",
-        password="uQe3haYPKV",
-        database="sql7823353"
+        user="sql7823404",
+        password="RzwPNt58x2",
+        database="sql7823404"
     )
 
 def create_table():
