@@ -6,6 +6,21 @@ from zoneinfo import ZoneInfo
 
 zhoraria = ZoneInfo("Europe/Madrid")
 
+ALERT_THRESHOLDS = {
+    "bitcoin": {
+        "max": 70000,
+        "min": 65000
+    },
+    "ethereum": {
+        "max": 3500,
+        "min": 3000
+    },
+    "bitcoin-cash": {
+        "max": 300,
+        "min": 200
+    }
+}
+
 
 def connect():
     return mysql.connector.connect(
@@ -68,6 +83,27 @@ def save_prices(prices):
     conn.close()
 
 
+def alerts(prices):
+    print ("Procesando alertas...")
+
+    for name, price in prices.items():
+        config = ALERT_THRESHOLDS.get(name)
+
+        if config is None:
+            continue
+
+        min_price = config["min"]
+        max_price = config["max"]
+
+        if price > max_price:
+            print(f"🚀 {name} ha superado el MÁXIMO ({max_price}) → {price}")
+
+        elif price < min_price:
+            print(f"📉 {name} ha bajado del MÍNIMO ({min_price}) → {price}")
+
+
+
+
 def main():
     print("Iniciando tracker...")
 
@@ -77,6 +113,7 @@ def main():
         try:
             prices = fetch_prices()
             save_prices(prices)
+            alerts(prices)
             #print("Guardado correctamente\n")
 
         except Exception as e:
