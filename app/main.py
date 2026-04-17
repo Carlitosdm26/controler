@@ -7,19 +7,19 @@ from zoneinfo import ZoneInfo
 from twilio.rest import Client
 
 zhoraria = ZoneInfo("Europe/Madrid")
-WITHELIST = {"bitcoin-cash"}
+WITHELIST = {"bitcoin-cash", "bitcoin"}
 ALERT_THRESHOLDS = {
     "bitcoin": {
         "max": 70000,
-        "min": 65000
+        "min": 60000
     },
     "ethereum": {
         "max": 3500,
         "min": 3000
     },
     "bitcoin-cash": {
-        "max": 380,
-        "min": 360
+        "max": 400,
+        "min": 350
     }
 }
 
@@ -87,7 +87,7 @@ def save_prices(prices):
 
 
 def alerts(prices):
-    print ("Procesando alertas...")
+    #print ("Procesando alertas...")
 
     TELEGRAM_TOKEN = "8316435201:AAE-Pvz6b1k8MKuSx9xlc2X7Me6WtazJP-w"
     CHAT_ID = "7550716847"
