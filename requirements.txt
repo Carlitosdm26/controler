@@ -2,3 +2,4 @@ requests
 mysql-connector-python
 schedule
 twilio
+python-dotenv

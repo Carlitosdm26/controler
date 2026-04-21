@@ -5,6 +5,10 @@ import schedule
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from twilio.rest import Client
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 zhoraria = ZoneInfo("Europe/Madrid")
 WITHELIST = {"bitcoin-cash", "bitcoin"}
@@ -26,10 +30,10 @@ ALERT_THRESHOLDS = {
 
 def connect():
     return mysql.connector.connect(
-        host="sql7.freesqldatabase.com",
-        user="sql7823404",
-        password="RzwPNt58x2",
-        database="sql7823404"
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
     )
 
 def create_table():
@@ -80,7 +84,8 @@ def save_prices(prices):
             "INSERT INTO crypto_prices (name, price, timestamp) VALUES (%s, %s, %s)",
             (name, price, timestamp)
         )
-    print("Proceso de guardado en BDD: OK")
+        print(f"OK - INSERT {name}")
+    print(f"Proceso de guardado en BDD: OK - {timestamp}" )
 
     conn.commit()
     conn.close()
@@ -89,13 +94,13 @@ def save_prices(prices):
 def alerts(prices):
     #print ("Procesando alertas...")
 
-    TELEGRAM_TOKEN = "8316435201:AAE-Pvz6b1k8MKuSx9xlc2X7Me6WtazJP-w"
-    CHAT_ID = "7550716847"
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-    ACCOUNT_SID = "AC450ca4b09273b6996bff3cd5bf2c9e9e"
-    AUTH_TOKEN = "d497e18e5f951c54d044d7c51f63429a"
-    TWILIO_NUMBER = "+12182314043"   # número de Twilio
-    YOUR_NUMBER = "+34645913563"   # tu móvil
+    ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+    AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+    TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")   # número de Twilio
+    YOUR_NUMBER = os.getenv("YOUR_NUMBER")   # tu móvil
 
     client = Client(ACCOUNT_SID, AUTH_TOKEN)
 
@@ -141,14 +146,15 @@ def alerts(prices):
             send_telegram(msg)
 
 def job():
-    print("\n")
+    timestamp = datetime.now(zhoraria)
+    print(f"\nJOB EJECUTADO. {timestamp}")
     try:
         prices = fetch_prices()
         save_prices(prices)
         alerts(prices)
 
     except Exception as e:
-        print("Error:", e)
+        print("No se ha podido procesar", e)
 
 
 
@@ -158,7 +164,7 @@ def main():
     print("Iniciando tracker...")
     job()
     #schedule.every(1).minutes.do(job)
-    schedule.every(30).seconds.do(job)
+    schedule.every(1).minutes.do(job)
     while True:
         schedule.run_pending()
         time.sleep(1)
