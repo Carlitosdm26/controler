@@ -11,22 +11,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 zhoraria = ZoneInfo("Europe/Madrid")
-WITHELIST = {"bitcoin-cash", "bitcoin"}
-ALERT_THRESHOLDS = {
-    "bitcoin": {
-        "max": 70000,
-        "min": 60000
-    },
-    "ethereum": {
-        "max": 3500,
-        "min": 3000
-    },
-    "bitcoin-cash": {
-        "max": 400,
-        "min": 350
-    }
-}
 
+
+# ------------------ CONEXIÓN ------------------
 
 def connect():
     return mysql.connector.connect(
@@ -36,73 +23,144 @@ def connect():
         database=os.getenv("DB_NAME")
     )
 
-def create_table():
+
+# ------------------ CREACIÓN TABLAS ------------------
+
+def create_tables():
     conn = connect()
     cursor = conn.cursor()
 
+    # tabla de precios
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS crypto_prices (
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(100),
         price FLOAT,
-        timestamp TIMESTAMP
+        created_at TIMESTAMP
     )
-""")
+    """)
+
+    # tabla de configuración de cryptos
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS crypto_alert (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) UNIQUE,
+        min_price FLOAT,
+        max_price FLOAT,
+        alerts_enabled BOOLEAN
+    )
+    """)
+
+    # insertar bitcoin por defecto
+    cursor.execute("""
+    INSERT IGNORE INTO crypto_alert (name, min_price, max_price, alerts_enabled)
+    VALUES ('bitcoin', 60000, 70000, TRUE)
+    """)
 
     conn.commit()
     conn.close()
 
 
+# ------------------ OBTENER CRYPTOS ------------------
+
+def get_cryptos():
+    conn = connect()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT name FROM crypto_alert")
+    result = cursor.fetchall()
+
+    conn.close()
+
+    return [row[0] for row in result]
+
+
+# ------------------ OBTENER CONFIG ALERTAS ------------------
+
+def get_alert_config():
+    conn = connect()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT name, min_price, max_price, alerts_enabled
+        FROM crypto_alert
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    config = {}
+    for row in rows:
+        config[row[0]] = {
+            "min": row[1],
+            "max": row[2],
+            "enabled": row[3]
+        }
+
+    return config
+
+
+# ------------------ FETCH PRECIOS ------------------
+
 def fetch_prices():
+    cryptos = get_cryptos()
+
+    if not cryptos:
+        print("No hay criptos en la BDD")
+        return {}
+
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {
-        "ids": "bitcoin,ethereum,bitcoin-cash",
+        "ids": ",".join(cryptos),
         "vs_currencies": "eur"
     }
 
     response = requests.get(url, params=params)
     data = response.json()
 
-    prices = {
-        "bitcoin": data["bitcoin"]["eur"],
-        "ethereum": data["ethereum"]["eur"],
-        "bitcoin-cash": data["bitcoin-cash"]["eur"]
-    }
+    prices = {}
 
-    #print("Precios obtenidos:", prices)
+    for crypto in cryptos:
+        if crypto in data:
+            prices[crypto] = data[crypto]["eur"]
+
     return prices
 
+
+# ------------------ GUARDAR PRECIOS ------------------
 
 def save_prices(prices):
     conn = connect()
     cursor = conn.cursor()
     timestamp = datetime.now(zhoraria)
-    create_table()
 
     for name, price in prices.items():
         cursor.execute(
-            "INSERT INTO crypto_prices (name, price, timestamp) VALUES (%s, %s, %s)",
+            "INSERT INTO crypto_prices (name, price, created_at) VALUES (%s, %s, %s)",
             (name, price, timestamp)
         )
         print(f"OK - INSERT {name}")
-    print(f"Proceso de guardado en BDD: OK - {timestamp}" )
+
+    print(f"Proceso de guardado en BDD: OK - {timestamp}")
 
     conn.commit()
     conn.close()
 
 
-def alerts(prices):
-    #print ("Procesando alertas...")
+# ------------------ ALERTAS ------------------
 
+def alerts(prices):
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
     ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
     AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-    TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")   # número de Twilio
-    YOUR_NUMBER = os.getenv("YOUR_NUMBER")   # tu móvil
+    TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
+    YOUR_NUMBER = os.getenv("YOUR_NUMBER")
 
     client = Client(ACCOUNT_SID, AUTH_TOKEN)
+
+    config = get_alert_config()
 
     def send_telegram(msg):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -120,51 +178,53 @@ def alerts(prices):
         )
         print("SMS enviado:", msg)
 
-
     for name, price in prices.items():
-        config = ALERT_THRESHOLDS.get(name)
-
-        if config is None:
+        if name not in config:
             continue
 
-        if name not in WITHELIST:
+        conf = config[name]
+
+        if not conf["enabled"]:
             continue
 
-        min_price = config["min"]
-        max_price = config["max"]
+        min_price = conf["min"]
+        max_price = conf["max"]
 
-        if price > max_price:
+        if max_price is not None and price > max_price:
             msg = f"🚀 {name} ha superado el MÁXIMO ({max_price}) → {price}"
-            #print(msg)
-            #send_sms(msg)
             send_telegram(msg)
 
-        elif price < min_price:
+        elif min_price is not None and price < min_price:
             msg = f"📉 {name} ha bajado del MÍNIMO ({min_price}) → {price}"
-            #print(msg)
-            #send_sms(msg)
             send_telegram(msg)
+
+
+# ------------------ JOB ------------------
 
 def job():
     timestamp = datetime.now(zhoraria)
     print(f"\nJOB EJECUTADO. {timestamp}")
+
     try:
         prices = fetch_prices()
         save_prices(prices)
         alerts(prices)
 
     except Exception as e:
-        print("No se ha podido procesar", e)
+        print("Error en el proceso:", e)
 
 
-
-
+# ------------------ MAIN ------------------
 
 def main():
     print("Iniciando tracker...")
+
+    create_tables()
+
     job()
-    #schedule.every(1).minutes.do(job)
+
     schedule.every(1).minutes.do(job)
+
     while True:
         schedule.run_pending()
         time.sleep(1)
