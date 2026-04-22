@@ -4,7 +4,6 @@ import time
 import schedule
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from twilio.rest import Client
 import os
 from dotenv import load_dotenv
 
@@ -30,18 +29,7 @@ def create_tables():
     conn = connect()
     cursor = conn.cursor()
 
-    # tabla de precios
-    cursor.execute("""
-    CREATE TABLE crypto_prices (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        crypto_id INT,
-        price FLOAT,
-        created_at TIMESTAMP,
-        FOREIGN KEY (crypto_id) REFERENCES crypto_alert(id)
-    )
-    """)
-
-    # tabla de configuración de cryptos
+    # PRIMERO crypto_alert
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS crypto_alert (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -52,7 +40,18 @@ def create_tables():
     )
     """)
 
-    # insertar bitcoin por defecto
+    # DESPUÉS crypto_prices
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS crypto_prices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        crypto_id INT,
+        price FLOAT,
+        created_at TIMESTAMP,
+        FOREIGN KEY (crypto_id) REFERENCES crypto_alert(id)
+    )
+    """)
+
+    # insertar bitcoin si no existe
     cursor.execute("""
     INSERT IGNORE INTO crypto_alert (name, min_price, max_price, alerts_enabled)
     VALUES ('bitcoin', 60000, 70000, TRUE)
@@ -75,14 +74,15 @@ def get_cryptos():
 
     return result  # [(1, 'bitcoin'), (2, 'ethereum')]
 
-# ------------------ OBTENER CONFIG ALERTAS ------------------
+
+# ------------------ CONFIG ALERTAS ------------------
 
 def get_alert_config():
     conn = connect()
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT name, min_price, max_price, alerts_enabled
+        SELECT id, name, min_price, max_price, alerts_enabled
         FROM crypto_alert
     """)
 
@@ -92,9 +92,10 @@ def get_alert_config():
     config = {}
     for row in rows:
         config[row[0]] = {
-            "min": row[1],
-            "max": row[2],
-            "enabled": row[3]
+            "name": row[1],
+            "min": row[2],
+            "max": row[3],
+            "enabled": row[4]
         }
 
     return config
@@ -106,12 +107,13 @@ def fetch_prices():
     cryptos = get_cryptos()
 
     if not cryptos:
-        print("No hay criptos en la BDD")
         return {}
+
+    names = [c[1] for c in cryptos]
 
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {
-        "ids": ",".join(cryptos),
+        "ids": ",".join(names),
         "vs_currencies": "eur"
     }
 
@@ -120,9 +122,9 @@ def fetch_prices():
 
     prices = {}
 
-    for crypto in cryptos:
-        if crypto in data:
-            prices[crypto] = data[crypto]["eur"]
+    for crypto_id, name in cryptos:
+        if name in data:
+            prices[crypto_id] = data[name]["eur"]
 
     return prices
 
@@ -134,14 +136,14 @@ def save_prices(prices):
     cursor = conn.cursor()
     timestamp = datetime.now(zhoraria)
 
-    for name, price in prices.items():
+    for crypto_id, price in prices.items():
         cursor.execute(
-            "INSERT INTO crypto_prices (name, price, created_at) VALUES (%s, %s, %s)",
-            (name, price, timestamp)
+            "INSERT INTO crypto_prices (crypto_id, price, created_at) VALUES (%s, %s, %s)",
+            (crypto_id, price, timestamp)
         )
-        print(f"OK - INSERT {name}")
+        print(f"OK - INSERT crypto_id={crypto_id}")
 
-    print(f"Proceso de guardado en BDD: OK - {timestamp}")
+    print(f"Guardado OK - {timestamp}")
 
     conn.commit()
     conn.close()
@@ -153,13 +155,6 @@ def alerts(prices):
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-    ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-    AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-    TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
-    YOUR_NUMBER = os.getenv("YOUR_NUMBER")
-
-    client = Client(ACCOUNT_SID, AUTH_TOKEN)
-
     config = get_alert_config()
 
     def send_telegram(msg):
@@ -170,23 +165,16 @@ def alerts(prices):
         })
         print("Telegram enviado:", msg)
 
-    def send_sms(msg):
-        client.messages.create(
-            body=msg,
-            from_=TWILIO_NUMBER,
-            to=YOUR_NUMBER
-        )
-        print("SMS enviado:", msg)
-
-    for name, price in prices.items():
-        if name not in config:
+    for crypto_id, price in prices.items():
+        if crypto_id not in config:
             continue
 
-        conf = config[name]
+        conf = config[crypto_id]
 
         if not conf["enabled"]:
             continue
 
+        name = conf["name"]
         min_price = conf["min"]
         max_price = conf["max"]
 
@@ -203,7 +191,7 @@ def alerts(prices):
 
 def job():
     timestamp = datetime.now(zhoraria)
-    print(f"\nJOB EJECUTADO. {timestamp}")
+    print(f"\nJOB EJECUTADO: {timestamp}")
 
     try:
         prices = fetch_prices()
