@@ -32,11 +32,12 @@ def create_tables():
 
     # tabla de precios
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS crypto_prices (
+    CREATE TABLE crypto_prices (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100),
+        crypto_id INT,
         price FLOAT,
-        created_at TIMESTAMP
+        created_at TIMESTAMP,
+        FOREIGN KEY (crypto_id) REFERENCES crypto_alert(id)
     )
     """)
 
@@ -67,13 +68,12 @@ def get_cryptos():
     conn = connect()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT name FROM crypto_alert")
+    cursor.execute("SELECT id, name FROM crypto_alert")
     result = cursor.fetchall()
 
     conn.close()
 
-    return [row[0] for row in result]
-
+    return result  # [(1, 'bitcoin'), (2, 'ethereum')]
 
 # ------------------ OBTENER CONFIG ALERTAS ------------------
 
