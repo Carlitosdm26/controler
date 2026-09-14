@@ -27,6 +27,8 @@ ALERT_THRESHOLDS = {
         "min": 350
     }
 }
+telegram_subscribers = set()
+telegram_update_offset = None
 
 
 def connect():
@@ -86,27 +88,74 @@ def save_prices(prices):
         conn.close()
 
 
-def alerts(prices):
-    #print ("Procesando alertas...")
+def send_telegram(telegram_token, chat_id, msg):
+    url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+    response = requests.post(url, data={
+        "chat_id": chat_id,
+        "text": msg
+    }, timeout=10)
+    response.raise_for_status()
+    result = response.json()
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegram rechazó el mensaje: {result}")
+    print("Telegram enviado:", msg)
+
+
+def process_telegram_commands():
+    global telegram_update_offset
 
     telegram_token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-    if not telegram_token or not chat_id:
-        print("Telegram no configurado: define TELEGRAM_TOKEN y TELEGRAM_CHAT_ID")
+    if not telegram_token:
+        print("Telegram no configurado: define TELEGRAM_TOKEN")
         return
 
-    def send_telegram(msg):
-        url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
-        response = requests.post(url, data={
-            "chat_id": chat_id,
-            "text": msg
-        }, timeout=10)
+    params = {"timeout": 1}
+    if telegram_update_offset is not None:
+        params["offset"] = telegram_update_offset
+
+    try:
+        response = requests.get(
+            f"https://api.telegram.org/bot{telegram_token}/getUpdates",
+            params=params,
+            timeout=5
+        )
         response.raise_for_status()
-        result = response.json()
-        if not result.get("ok"):
-            raise RuntimeError(f"Telegram rechazó el mensaje: {result}")
-        print("Telegram enviado:", msg)
+        updates = response.json().get("result", [])
+    except Exception as error:
+        print("Error leyendo comandos de Telegram:", error)
+        return
+
+    for update in updates:
+        telegram_update_offset = update["update_id"] + 1
+        message = update.get("message", {})
+        chat_id = str(message.get("chat", {}).get("id", ""))
+        command = message.get("text", "").strip().upper()
+
+        if not chat_id:
+            continue
+
+        if command in {"SI", "SÍ"}:
+            telegram_subscribers.add(chat_id)
+            send_telegram(telegram_token, chat_id, "Alertas activadas.")
+        elif command == "NO":
+            telegram_subscribers.discard(chat_id)
+            send_telegram(telegram_token, chat_id, "Alertas desactivadas.")
+
+
+def alerts(prices):
+    telegram_token = os.getenv("TELEGRAM_TOKEN")
+
+    if not telegram_token:
+        print("Telegram no configurado: define TELEGRAM_TOKEN")
+        return
+
+    if not telegram_subscribers:
+        print("No hay chats suscritos a las alertas")
+        return
+
+    def send_alert(msg):
+        for chat_id in tuple(telegram_subscribers):
+            send_telegram(telegram_token, chat_id, msg)
 
     def send_sms(msg):
         account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -138,13 +187,13 @@ def alerts(prices):
             msg = f"🚀 {name} ha superado el MÁXIMO ({max_price}) → {price}"
             #print(msg)
             #send_sms(msg)
-            send_telegram(msg)
+            send_alert(msg)
 
         elif price < min_price:
             msg = f"📉 {name} ha bajado del MÍNIMO ({min_price}) → {price}"
             #print(msg)
             #send_sms(msg)
-            send_telegram(msg)
+            send_alert(msg)
 
 def job():
     print("\n")
@@ -174,6 +223,7 @@ def main():
     #schedule.every(1).minutes.do(job)
     schedule.every(30).seconds.do(job)
     while True:
+        process_telegram_commands()
         schedule.run_pending()
         time.sleep(1)
 
