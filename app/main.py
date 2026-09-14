@@ -2,9 +2,14 @@ import requests
 import mysql.connector
 import time
 import schedule
+import os
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 from twilio.rest import Client
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 zhoraria = ZoneInfo("Europe/Madrid")
 WITHELIST = {"bitcoin-cash", "bitcoin"}
@@ -26,16 +31,13 @@ ALERT_THRESHOLDS = {
 
 def connect():
     return mysql.connector.connect(
-        host="sql7.freesqldatabase.com",
-        user="sql7823404",
-        password="RzwPNt58x2",
-        database="sql7823404"
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
     )
 
-def create_table():
-    conn = connect()
-    cursor = conn.cursor()
-
+def create_table(cursor):
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS crypto_prices (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -45,10 +47,6 @@ def create_table():
     )
 """)
 
-    conn.commit()
-    conn.close()
-
-
 def fetch_prices():
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {
@@ -56,7 +54,8 @@ def fetch_prices():
         "vs_currencies": "eur"
     }
 
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params, timeout=10)
+    response.raise_for_status()
     data = response.json()
 
     prices = {
@@ -71,47 +70,54 @@ def fetch_prices():
 
 def save_prices(prices):
     conn = connect()
-    cursor = conn.cursor()
-    timestamp = datetime.now(zhoraria)
-    create_table()
+    try:
+        cursor = conn.cursor()
+        timestamp = datetime.now(zhoraria)
+        create_table(cursor)
 
-    for name, price in prices.items():
-        cursor.execute(
-            "INSERT INTO crypto_prices (name, price, timestamp) VALUES (%s, %s, %s)",
-            (name, price, timestamp)
-        )
-    print("Proceso de guardado en BDD: OK")
-
-    conn.commit()
-    conn.close()
+        for name, price in prices.items():
+            cursor.execute(
+                "INSERT INTO crypto_prices (name, price, timestamp) VALUES (%s, %s, %s)",
+                (name, price, timestamp)
+            )
+        conn.commit()
+        print("Proceso de guardado en BDD: OK")
+    finally:
+        conn.close()
 
 
 def alerts(prices):
     #print ("Procesando alertas...")
 
-    TELEGRAM_TOKEN = "8316435201:AAE-Pvz6b1k8MKuSx9xlc2X7Me6WtazJP-w"
-    CHAT_ID = "7550716847"
+    telegram_token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-    ACCOUNT_SID = "AC450ca4b09273b6996bff3cd5bf2c9e9e"
-    AUTH_TOKEN = "d497e18e5f951c54d044d7c51f63429a"
-    TWILIO_NUMBER = "+12182314043"   # número de Twilio
-    YOUR_NUMBER = "+34645913563"   # tu móvil
-
-    client = Client(ACCOUNT_SID, AUTH_TOKEN)
+    if not telegram_token or not chat_id:
+        print("Telegram no configurado: define TELEGRAM_TOKEN y TELEGRAM_CHAT_ID")
+        return
 
     def send_telegram(msg):
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": CHAT_ID,
+        url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+        response = requests.post(url, data={
+            "chat_id": chat_id,
             "text": msg
-        })
+        }, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        if not result.get("ok"):
+            raise RuntimeError(f"Telegram rechazó el mensaje: {result}")
         print("Telegram enviado:", msg)
 
     def send_sms(msg):
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        twilio_number = os.getenv("TWILIO_NUMBER")
+        your_number = os.getenv("YOUR_NUMBER")
+        client = Client(account_sid, auth_token)
         client.messages.create(
             body=msg,
-            from_=TWILIO_NUMBER,
-            to=YOUR_NUMBER
+            from_=twilio_number,
+            to=your_number
         )
         print("SMS enviado:", msg)
 
@@ -144,11 +150,19 @@ def job():
     print("\n")
     try:
         prices = fetch_prices()
-        save_prices(prices)
-        alerts(prices)
+    except Exception as error:
+        print("Error obteniendo precios:", error)
+        return
 
-    except Exception as e:
-        print("Error:", e)
+    try:
+        save_prices(prices)
+    except Exception as error:
+        print("Error guardando en la base de datos:", error)
+
+    try:
+        alerts(prices)
+    except Exception as error:
+        print("Error enviando alertas:", error)
 
 
 
