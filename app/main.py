@@ -386,6 +386,36 @@ def send_telegram(telegram_token, chat_id, msg, subscriber_label=None, log_deliv
         print(f"Mensaje enviado a {target}")
 
 
+def configure_telegram_commands():
+    telegram_token = os.getenv("TELEGRAM_TOKEN")
+    if not telegram_token:
+        print("Telegram no configurado: no se pudo crear el menú de comandos")
+        return
+
+    commands = [
+        {"command": "start", "description": "Ver el mensaje de bienvenida"},
+        {"command": "help", "description": "Ver los comandos disponibles"},
+        {"command": "activar", "description": "Activar las alertas"},
+        {"command": "desactivar", "description": "Desactivar las alertas"},
+        {"command": "lista", "description": "Ver los usuarios registrados"},
+        {"command": "suscribir", "description": "Suscribir un usuario"},
+        {"command": "desuscribir", "description": "Desuscribir un usuario"},
+    ]
+
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{telegram_token}/setMyCommands",
+            json={"commands": commands},
+            timeout=10
+        )
+        response.raise_for_status()
+        if not response.json().get("ok"):
+            raise RuntimeError("Telegram rechazó la configuración del menú")
+        print("Menú de comandos de Telegram configurado")
+    except Exception as error:
+        print("No se pudo configurar el menú de Telegram:", error)
+
+
 def process_telegram_commands():
     global telegram_update_offset
 
@@ -647,6 +677,7 @@ def job():
 
 def main():
     print("Iniciando tracker...")
+    configure_telegram_commands()
     ensure_alert_config_table()
     ensure_subscriber_table()
     load_telegram_subscribers()
