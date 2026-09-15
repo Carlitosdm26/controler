@@ -131,6 +131,7 @@ Guarda una fila por chat de Telegram:
 
 | Campo | Descripción |
 | --- | --- |
+| `id` | Identificador numérico autonumérico del usuario. |
 | `chat_id` | Identificador único del chat de Telegram. |
 | `username` | Nombre de usuario de Telegram, si existe. |
 | `first_name` | Nombre del usuario. |
@@ -141,6 +142,17 @@ Guarda una fila por chat de Telegram:
 | `updated_at` | Fecha de última modificación. |
 
 Un usuario se registra aunque envíe un mensaje que el bot no reconozca. Los cambios manuales de `notifications_enabled` se vuelven a leer antes de cada ciclo de alertas, por lo que no es necesario reiniciar el bot.
+
+### `telegram_messages`
+
+Guarda los mensajes de texto que no son comandos, relacionados con el usuario mediante `user_id`:
+
+| Campo | Descripción |
+| --- | --- |
+| `id` | Identificador autonumérico del mensaje. |
+| `user_id` | `id` del usuario en `telegram_subscribers`. |
+| `message` | Texto enviado por el usuario. |
+| `created_at` | Fecha de recepción del mensaje. |
 
 Ejemplo para activar o desactivar alertas manualmente:
 
