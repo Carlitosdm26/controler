@@ -1,3 +1,4 @@
 .env
+.telegram_subscribers.json
 __pycache__/
 *.pyc
