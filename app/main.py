@@ -3,7 +3,6 @@ import mysql.connector
 import time
 import schedule
 import os
-import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,7 +12,6 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 zhoraria = ZoneInfo("Europe/Madrid")
-SUBSCRIBERS_FILE = Path(__file__).resolve().parent.parent / ".telegram_subscribers.json"
 WITHELIST = {"bitcoin-cash", "bitcoin"}
 ALERT_THRESHOLDS = {
     "bitcoin": {
@@ -88,21 +86,94 @@ def save_prices(prices):
                 (name, price, timestamp)
             )
         conn.commit()
-        print("Proceso de guardado en BDD: OK")
+        #print("Proceso de guardado en BDD: OK")
+    finally:
+        conn.close()
+
+
+def ensure_subscriber_table():
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_subscribers (
+                chat_id BIGINT PRIMARY KEY,
+                username VARCHAR(255) NOT NULL DEFAULT '',
+                first_name VARCHAR(255) NOT NULL DEFAULT '',
+                last_name VARCHAR(255) NOT NULL DEFAULT '',
+                is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                notifications_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        """)
+    finally:
+        conn.close()
+
+
+def user_is_admin(chat_id):
+    normalized_chat_id = str(chat_id)
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT is_admin FROM telegram_subscribers WHERE chat_id = %s",
+            (int(normalized_chat_id),)
+        )
+        row = cursor.fetchone()
+        return bool(row and row[0])
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def get_db_is_admin(chat_id):
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT is_admin FROM telegram_subscribers WHERE chat_id = %s",
+            (int(str(chat_id)),)
+        )
+        row = cursor.fetchone()
+        return bool(row and row[0])
     finally:
         conn.close()
 
 
 def save_telegram_subscribers():
-    payload = {}
-    for chat_id in sorted(telegram_subscribers):
-        meta = telegram_subscribers_meta.get(str(chat_id), {})
-        payload[str(chat_id)] = {
-            "username": meta.get("username") or "",
-            "first_name": meta.get("first_name") or "",
-            "last_name": meta.get("last_name") or ""
-        }
-    SUBSCRIBERS_FILE.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    ensure_subscriber_table()
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+
+        for chat_id in sorted(telegram_subscribers, key=lambda value: str(value)):
+            meta = telegram_subscribers_meta.get(str(chat_id), {})
+            username = (meta.get("username") or "").strip()
+            first_name = (meta.get("first_name") or "").strip()
+            last_name = (meta.get("last_name") or "").strip()
+            chat_id_int = int(str(chat_id))
+            is_admin = 1 if get_db_is_admin(chat_id) else 0
+
+            cursor.execute(
+                """
+                INSERT INTO telegram_subscribers (chat_id, username, first_name, last_name, is_admin, notifications_enabled)
+                VALUES (%s, %s, %s, %s, %s, 1)
+                ON DUPLICATE KEY UPDATE
+                    username = VALUES(username),
+                    first_name = VALUES(first_name),
+                    last_name = VALUES(last_name),
+                    is_admin = is_admin,
+                    notifications_enabled = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (chat_id_int, username, first_name, last_name, is_admin)
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_subscriber_label(chat_id):
@@ -122,41 +193,71 @@ def get_subscriber_label(chat_id):
 
 
 def load_telegram_subscribers():
-    if not SUBSCRIBERS_FILE.exists():
-        save_telegram_subscribers()
-        return
+    telegram_subscribers.clear()
+    telegram_subscribers_meta.clear()
+    ensure_subscriber_table()
 
+    conn = connect()
     try:
-        subscribers = json.loads(SUBSCRIBERS_FILE.read_text(encoding="utf-8"))
-        if isinstance(subscribers, list):
-            for chat_id in subscribers:
-                chat_id = str(chat_id)
-                telegram_subscribers.add(chat_id)
-                telegram_subscribers_meta.setdefault(chat_id, {
-                    "username": "",
-                    "first_name": "",
-                    "last_name": ""
-                })
-            return
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT chat_id, username, first_name, last_name FROM telegram_subscribers WHERE notifications_enabled = TRUE"
+        )
+        for chat_id, username, first_name, last_name in cursor.fetchall():
+            chat_id = str(chat_id)
+            telegram_subscribers.add(chat_id)
+            telegram_subscribers_meta[chat_id] = {
+                "username": username or "",
+                "first_name": first_name or "",
+                "last_name": last_name or ""
+            }
+    except Exception as error:
+        print("Error cargando suscriptores desde la base de datos:", error)
+    finally:
+        conn.close()
 
-        if isinstance(subscribers, dict):
-            for chat_id, meta in subscribers.items():
-                chat_id = str(chat_id)
-                telegram_subscribers.add(chat_id)
-                if isinstance(meta, dict):
-                    telegram_subscribers_meta[chat_id] = {
-                        "username": meta.get("username") or "",
-                        "first_name": meta.get("first_name") or "",
-                        "last_name": meta.get("last_name") or ""
-                    }
-                else:
-                    telegram_subscribers_meta[chat_id] = {
-                        "username": "",
-                        "first_name": "",
-                        "last_name": ""
-                    }
-    except (OSError, json.JSONDecodeError, TypeError):
-        print(f"No se pudo leer {SUBSCRIBERS_FILE.name}")
+
+def ensure_telegram_user(chat_id, sender=None):
+    chat_id = str(chat_id)
+    meta = telegram_subscribers_meta.setdefault(chat_id, {
+        "username": "",
+        "first_name": "",
+        "last_name": ""
+    })
+
+    if sender:
+        meta["username"] = sender.get("username") or meta.get("username") or ""
+        meta["first_name"] = sender.get("first_name") or meta.get("first_name") or ""
+        meta["last_name"] = sender.get("last_name") or meta.get("last_name") or ""
+
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO telegram_subscribers (chat_id, username, first_name, last_name, is_admin, notifications_enabled)
+            VALUES (%s, %s, %s, %s, 0, 0)
+            ON DUPLICATE KEY UPDATE
+                username = VALUES(username),
+                first_name = VALUES(first_name),
+                last_name = VALUES(last_name),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                int(chat_id),
+                meta.get("username") or "",
+                meta.get("first_name") or "",
+                meta.get("last_name") or "",
+            )
+        )
+        if cursor.rowcount == 1:
+            print(
+                f"Usuario registrado en BD: {get_subscriber_label(chat_id)} | "
+                f"chat_id={chat_id}"
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def subscribe_telegram_chat(chat_id, sender=None):
@@ -171,7 +272,36 @@ def subscribe_telegram_chat(chat_id, sender=None):
         meta["username"] = sender.get("username") or meta.get("username") or ""
         meta["first_name"] = sender.get("first_name") or meta.get("first_name") or ""
         meta["last_name"] = sender.get("last_name") or meta.get("last_name") or ""
-    save_telegram_subscribers()
+
+    ensure_telegram_user(chat_id, sender)
+
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        current_is_admin = get_db_is_admin(chat_id)
+        cursor.execute(
+            """
+            INSERT INTO telegram_subscribers (chat_id, username, first_name, last_name, is_admin, notifications_enabled)
+            VALUES (%s, %s, %s, %s, %s, 1)
+            ON DUPLICATE KEY UPDATE
+                username = VALUES(username),
+                first_name = VALUES(first_name),
+                last_name = VALUES(last_name),
+                is_admin = is_admin,
+                notifications_enabled = 1,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                int(chat_id),
+                meta.get("username") or "",
+                meta.get("first_name") or "",
+                meta.get("last_name") or "",
+                1 if current_is_admin else 0,
+            )
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def unsubscribe_telegram_chat(chat_id):
@@ -179,7 +309,20 @@ def unsubscribe_telegram_chat(chat_id):
     if chat_id in telegram_subscribers:
         telegram_subscribers.discard(chat_id)
     telegram_subscribers_meta.pop(chat_id, None)
-    save_telegram_subscribers()
+
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE telegram_subscribers SET notifications_enabled = FALSE, updated_at = CURRENT_TIMESTAMP WHERE chat_id = %s",
+            (int(chat_id),)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    if str(chat_id) in telegram_subscribers:
+        telegram_subscribers.discard(str(chat_id))
 
 
 def send_telegram(telegram_token, chat_id, msg, subscriber_label=None):
@@ -238,8 +381,10 @@ def process_telegram_commands():
         sender_name = " ".join(part for part in [first_name, last_name] if part).strip() or "sin nombre"
         sender_label = f"{username} | {sender_name}"
 
+        ensure_telegram_user(chat_id, sender)
+
         if command == "/START":
-            if chat_id == ADMIN_CHAT_ID:
+            if user_is_admin(chat_id):
                 help_text = (
                     "👋 Bienvenido.\n\n"
                     "Comandos disponibles:\n"
@@ -259,7 +404,7 @@ def process_telegram_commands():
             send_telegram(telegram_token, chat_id, help_text)
 
         elif command == "LISTA":
-            if chat_id != ADMIN_CHAT_ID:
+            if not user_is_admin(chat_id):
                 send_telegram(telegram_token, chat_id, "⛔ Solo el administrador puede usar este comando.")
                 continue
 
@@ -273,7 +418,7 @@ def process_telegram_commands():
             send_telegram(telegram_token, chat_id, "\n".join(lines))
 
         elif command.startswith("SUSCRIBIR "):
-            if chat_id != ADMIN_CHAT_ID:
+            if not user_is_admin(chat_id):
                 send_telegram(telegram_token, chat_id, "⛔ Solo el administrador puede ejecutar este comando.")
                 continue
 
@@ -287,7 +432,7 @@ def process_telegram_commands():
             print(f"Usuario suscrito manualmente: {target_chat_id} por {sender_label}")
 
         elif command.startswith("DESUSCRIBIR "):
-            if chat_id != ADMIN_CHAT_ID:
+            if not user_is_admin(chat_id):
                 send_telegram(telegram_token, chat_id, "⛔ Solo el administrador puede ejecutar este comando.")
                 continue
 
@@ -307,7 +452,9 @@ def process_telegram_commands():
             unsubscribe_label = f"{username} | {sender_name}"
             unsubscribe_telegram_chat(chat_id)
             print(f"Alertas desactivadas por {unsubscribe_label} (chat_id={chat_id})")
-            send_telegram(telegram_token, chat_id, "✅ Alertas desactivadas. Ya no recibirás avisos.", subscriber_label=unsubscribe_label)
+            send_telegram(telegram_token, chat_id, "🔕 Alertas desactivadas. Ya no recibirás avisos cuando cambie el precio.", subscriber_label=unsubscribe_label)
+        else:
+            continue
 
 
 def alerts(prices):
@@ -317,8 +464,10 @@ def alerts(prices):
         print("Telegram no configurado: define TELEGRAM_TOKEN")
         return
 
+    load_telegram_subscribers()
+
     if not telegram_subscribers:
-        print("No hay chats suscritos a las alertas")
+        #print("No hay chats suscritos a las alertas")
         return
 
     def send_alert(msg):
@@ -387,6 +536,7 @@ def job():
 
 def main():
     print("Iniciando tracker...")
+    ensure_subscriber_table()
     load_telegram_subscribers()
     try:
         job()
