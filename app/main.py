@@ -12,25 +12,10 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 zhoraria = ZoneInfo("Europe/Madrid")
-WITHELIST = {"bitcoin-cash", "bitcoin"}
-ALERT_THRESHOLDS = {
-    "bitcoin": {
-        "max": 70000,
-        "min": 60000
-    },
-    "ethereum": {
-        "max": 3500,
-        "min": 3000
-    },
-    "bitcoin-cash": {
-        "max": 400,
-        "min": 350
-    }
-}
 telegram_subscribers = set()
 telegram_subscribers_meta = {}
 telegram_update_offset = None
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "7550716847")
+no_subscribers_notice_shown = False
 
 
 def connect():
@@ -52,10 +37,53 @@ def create_table(cursor):
     )
 """)
 
+
+def ensure_alert_config_table():
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS crypto_alert_configs (
+                name VARCHAR(100) PRIMARY KEY,
+                min_price DECIMAL(20, 8) NOT NULL,
+                max_price DECIMAL(20, 8) NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_alert_configs():
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name, min_price, max_price, enabled FROM crypto_alert_configs"
+        )
+        return {
+            name: {
+                "min": float(min_price),
+                "max": float(max_price),
+                "enabled": bool(enabled),
+            }
+            for name, min_price, max_price, enabled in cursor.fetchall()
+        }
+    finally:
+        conn.close()
+
 def fetch_prices():
     url = "https://api.coingecko.com/api/v3/simple/price"
+    alert_configs = load_alert_configs()
+    crypto_names = list(alert_configs)
+
+    if not crypto_names:
+        print("No hay criptomonedas configuradas en crypto_alert_configs")
+        return {}
+
     params = {
-        "ids": "bitcoin,ethereum,bitcoin-cash",
+        "ids": ",".join(crypto_names),
         "vs_currencies": "eur"
     }
 
@@ -64,12 +92,11 @@ def fetch_prices():
     data = response.json()
 
     prices = {
-        "bitcoin": data["bitcoin"]["eur"],
-        "ethereum": data["ethereum"]["eur"],
-        "bitcoin-cash": data["bitcoin-cash"]["eur"]
+        name: values["eur"]
+        for name, values in data.items()
+        if "eur" in values
     }
 
-    #print("Precios obtenidos:", prices)
     return prices
 
 
@@ -86,7 +113,6 @@ def save_prices(prices):
                 (name, price, timestamp)
             )
         conn.commit()
-        #print("Proceso de guardado en BDD: OK")
     finally:
         conn.close()
 
@@ -138,6 +164,22 @@ def get_db_is_admin(chat_id):
         )
         row = cursor.fetchone()
         return bool(row and row[0])
+    finally:
+        conn.close()
+
+
+def get_all_telegram_users():
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT chat_id, username, first_name, last_name, is_admin, notifications_enabled
+            FROM telegram_subscribers
+            ORDER BY chat_id
+            """
+        )
+        return cursor.fetchall()
     finally:
         conn.close()
 
@@ -325,19 +367,23 @@ def unsubscribe_telegram_chat(chat_id):
         telegram_subscribers.discard(str(chat_id))
 
 
-def send_telegram(telegram_token, chat_id, msg, subscriber_label=None):
+def send_telegram(telegram_token, chat_id, msg, subscriber_label=None, log_delivery=True):
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
     response = requests.post(url, data={
         "chat_id": chat_id,
         "text": msg
     }, timeout=10)
-    response.raise_for_status()
+    if not response.ok:
+        raise RuntimeError(
+            f"Telegram devolvió HTTP {response.status_code}: {response.text}"
+        )
     result = response.json()
     if not result.get("ok"):
         raise RuntimeError(f"Telegram rechazó el mensaje: {result}")
 
-    target = subscriber_label or f"chat_id={chat_id}"
-    print(f"Telegram enviado a {target}: {msg}")
+    if log_delivery:
+        target = subscriber_label or f"chat_id={chat_id}"
+        print(f"Mensaje enviado a {target}")
 
 
 def process_telegram_commands():
@@ -384,59 +430,75 @@ def process_telegram_commands():
         ensure_telegram_user(chat_id, sender)
 
         if command == "/START":
+            start_text = (
+                "👋 Bienvenido. Este bot consulta los precios de varias criptomonedas "
+                "y te envía una alerta cuando alcanzan los límites configurados.\n\n"
+                "Usa /help para consultar los comandos disponibles."
+            )
+            send_telegram(telegram_token, chat_id, start_text, log_delivery=False)
+            print(f"Información enviada a {sender_label}")
+
+        elif command == "/HELP":
             if user_is_admin(chat_id):
                 help_text = (
-                    "👋 Bienvenido.\n\n"
                     "Comandos disponibles:\n"
-                    "- SI / SÍ: activar alertas\n"
-                    "- NO: desactivar alertas\n"
-                    "- LISTA: ver suscriptores activos\n"
-                    "- SUSCRIBIR <chat_id>: añadir un usuario manualmente\n"
-                    "- DESUSCRIBIR <chat_id>: quitar un usuario manualmente"
+                    "- /activar: activar alertas\n"
+                    "- /desactivar: desactivar alertas\n"
+                    "- /lista: ver todos los usuarios registrados\n"
+                    "- /suscribir <chat_id>: añadir un usuario manualmente\n"
+                    "- /desuscribir <chat_id>: quitar un usuario manualmente"
                 )
             else:
                 help_text = (
-                    "👋 Bienvenido.\n\n"
                     "Comandos disponibles:\n"
-                    "- SI / SÍ: activar alertas\n"
-                    "- NO: desactivar alertas"
+                    "- /activar: activar alertas\n"
+                    "- /desactivar: desactivar alertas"
                 )
             send_telegram(telegram_token, chat_id, help_text)
 
-        elif command == "LISTA":
+        elif command == "/LISTA":
             if not user_is_admin(chat_id):
                 send_telegram(telegram_token, chat_id, "⛔ Solo el administrador puede usar este comando.")
                 continue
 
-            if not telegram_subscribers:
-                send_telegram(telegram_token, chat_id, "📭 No hay suscriptores activos en este momento.")
+            users = get_all_telegram_users()
+            if not users:
+                send_telegram(telegram_token, chat_id, "📭 No hay usuarios registrados en este momento.")
                 continue
 
-            lines = ["📋 Suscriptores activos:"]
-            for active_chat_id in sorted(telegram_subscribers, key=lambda x: str(x)):
-                lines.append(f"- {get_subscriber_label(active_chat_id)} | chat_id={active_chat_id}")
+            lines = ["📋 Usuarios registrados:"]
+            for active_chat_id, username, first_name, last_name, is_admin, notifications_enabled in users:
+                full_name = " ".join(part for part in [first_name, last_name] if part).strip()
+                user_label = f"@{username}" if username else "sin username"
+                if full_name:
+                    user_label += f" ({full_name})"
+                lines.append(
+                    f"- {user_label} | {active_chat_id} | "
+                    f"Admin: {'Sí' if is_admin else 'No'} | "
+                    f"Alertas: {'Sí' if notifications_enabled else 'No'}"
+                )
             send_telegram(telegram_token, chat_id, "\n".join(lines))
 
-        elif command.startswith("SUSCRIBIR "):
+        elif command.startswith("/SUSCRIBIR "):
             if not user_is_admin(chat_id):
                 send_telegram(telegram_token, chat_id, "⛔ Solo el administrador puede ejecutar este comando.")
                 continue
 
-            target_chat_id = command.replace("SUSCRIBIR ", "", 1).strip()
+            target_chat_id = command.replace("/SUSCRIBIR ", "", 1).strip()
             if not target_chat_id:
-                send_telegram(telegram_token, chat_id, "⚠️ Formato correcto: SUSCRIBIR <chat_id>")
+                send_telegram(telegram_token, chat_id, "⚠️ Formato correcto: /suscribir <chat_id>")
                 continue
 
             subscribe_telegram_chat(target_chat_id)
             send_telegram(telegram_token, chat_id, f"✅ Usuario suscrito manualmente: {target_chat_id}")
             print(f"Usuario suscrito manualmente: {target_chat_id} por {sender_label}")
 
-        elif command.startswith("DESUSCRIBIR "):
+        elif command.startswith("/DESUSCRIBIR "):
             if not user_is_admin(chat_id):
                 send_telegram(telegram_token, chat_id, "⛔ Solo el administrador puede ejecutar este comando.")
                 continue
 
-            target_chat_id = command.replace("DESUSCRIBIR ", "", 1).strip()
+            target_chat_id = command.replace("/DESUSCRIBIR ", "", 1).strip()
             if target_chat_id in telegram_subscribers:
                 unsubscribe_telegram_chat(target_chat_id)
                 send_telegram(telegram_token, chat_id, f"✅ Usuario desuscrito: {target_chat_id}")
@@ -444,20 +506,34 @@ def process_telegram_commands():
             else:
                 send_telegram(telegram_token, chat_id, f"⚠️ No existe ese suscriptor: {target_chat_id}")
 
-        elif command in {"SI", "SÍ"}:
+        elif command == "/ACTIVAR":
             subscribe_telegram_chat(chat_id, sender)
-            print(f"Alertas activadas por {sender_label} (chat_id={chat_id})")
-            send_telegram(telegram_token, chat_id, "✅ Alertas activadas. Recibirás avisos cuando cambie el precio.", subscriber_label=sender_label)
-        elif command == "NO":
+            send_telegram(
+                telegram_token,
+                chat_id,
+                "✅ Alertas activadas. Recibirás avisos cuando cambie el precio.",
+                subscriber_label=sender_label,
+                log_delivery=False
+            )
+            print(f"Alertas activadas para {sender_label} (chat_id={chat_id})")
+        elif command == "/DESACTIVAR":
             unsubscribe_label = f"{username} | {sender_name}"
             unsubscribe_telegram_chat(chat_id)
-            print(f"Alertas desactivadas por {unsubscribe_label} (chat_id={chat_id})")
-            send_telegram(telegram_token, chat_id, "🔕 Alertas desactivadas. Ya no recibirás avisos cuando cambie el precio.", subscriber_label=unsubscribe_label)
+            send_telegram(
+                telegram_token,
+                chat_id,
+                "🔕 Alertas desactivadas. Ya no recibirás avisos cuando cambie el precio.",
+                subscriber_label=unsubscribe_label,
+                log_delivery=False
+            )
+            print(f"Alertas desactivadas para {unsubscribe_label} (chat_id={chat_id})")
         else:
             continue
 
 
 def alerts(prices):
+    global no_subscribers_notice_shown
+
     telegram_token = os.getenv("TELEGRAM_TOKEN")
 
     if not telegram_token:
@@ -467,12 +543,33 @@ def alerts(prices):
     load_telegram_subscribers()
 
     if not telegram_subscribers:
-        #print("No hay chats suscritos a las alertas")
+        if not no_subscribers_notice_shown:
+            print("No hay usuarios suscritos: no se enviarán alertas de precios.")
+            no_subscribers_notice_shown = True
         return
 
+    no_subscribers_notice_shown = False
+
+    alert_configs = load_alert_configs()
+
     def send_alert(msg):
+        recipients = []
+        failed_recipients = []
         for chat_id in tuple(telegram_subscribers):
-            send_telegram(telegram_token, chat_id, msg, subscriber_label=get_subscriber_label(chat_id))
+            subscriber_label = get_subscriber_label(chat_id)
+            try:
+                send_telegram(
+                    telegram_token,
+                    chat_id,
+                    msg,
+                    subscriber_label=subscriber_label,
+                    log_delivery=False
+                )
+                recipients.append(subscriber_label)
+            except Exception as error:
+                failed_recipients.append(subscriber_label)
+
+        return recipients, failed_recipients
 
     def send_sms(msg):
         account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -488,13 +585,12 @@ def alerts(prices):
         print("SMS enviado:", msg)
 
 
+    alert_reports = []
+
     for name, price in prices.items():
-        config = ALERT_THRESHOLDS.get(name)
+        config = alert_configs.get(name)
 
-        if config is None:
-            continue
-
-        if name not in WITHELIST:
+        if config is None or not config["enabled"]:
             continue
 
         min_price = config["min"]
@@ -502,22 +598,37 @@ def alerts(prices):
 
         if price > max_price:
             msg = f"🚀 {name} ha superado el MÁXIMO ({max_price}) → {price}"
-            #print(msg)
-            #send_sms(msg)
-            send_alert(msg)
+            recipients, failed_recipients = send_alert(msg)
+            alert_reports.append((f"Subida de {name}", recipients, failed_recipients))
 
         elif price < min_price:
             msg = f"📉 {name} ha bajado del MÍNIMO ({min_price}) → {price}"
-            #print(msg)
-            #send_sms(msg)
-            send_alert(msg)
+            recipients, failed_recipients = send_alert(msg)
+            alert_reports.append((f"Bajada de {name}", recipients, failed_recipients))
+
+    if alert_reports:
+        alert_labels = [label for label, _, _ in alert_reports]
+        print(f"🚨 ALERTA: {', '.join(alert_labels)}")
+
+        recipients = sorted({recipient for _, delivered, _ in alert_reports for recipient in delivered})
+        if recipients:
+            print(f"   Enviadas a: {', '.join(recipients)}")
+
+        failed_recipients = sorted({recipient for _, _, failed in alert_reports for recipient in failed})
+        if failed_recipients:
+            print(
+                f"   No enviado a: {', '.join(failed_recipients)} "
+                "(error de entrega en Telegram)"
+            )
 
 def job():
-    print("\n")
     try:
         prices = fetch_prices()
     except Exception as error:
         print("Error obteniendo precios:", error)
+        return
+
+    if not prices:
         return
 
     try:
@@ -536,18 +647,18 @@ def job():
 
 def main():
     print("Iniciando tracker...")
+    ensure_alert_config_table()
     ensure_subscriber_table()
     load_telegram_subscribers()
     try:
         job()
-        #schedule.every(1).minutes.do(job)
-        schedule.every(30).seconds.do(job)
+        schedule.every(1).minutes.do(job)
         while True:
             process_telegram_commands()
             schedule.run_pending()
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nPrograma detenido por el usuario.")
+        print("Programa detenido por el usuario.")
 
 
 if __name__ == "__main__":
