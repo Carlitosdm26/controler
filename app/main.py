@@ -123,7 +123,8 @@ def ensure_subscriber_table():
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS telegram_subscribers (
-                chat_id BIGINT PRIMARY KEY,
+                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                chat_id BIGINT NOT NULL UNIQUE,
                 username VARCHAR(255) NOT NULL DEFAULT '',
                 first_name VARCHAR(255) NOT NULL DEFAULT '',
                 last_name VARCHAR(255) NOT NULL DEFAULT '',
@@ -133,6 +134,48 @@ def ensure_subscriber_table():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ensure_message_table():
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_messages (
+                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                user_id BIGINT UNSIGNED NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_telegram_messages_user_id (user_id),
+                CONSTRAINT fk_telegram_messages_user
+                    FOREIGN KEY (user_id) REFERENCES telegram_subscribers(id)
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_telegram_message(chat_id, text):
+    conn = connect()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM telegram_subscribers WHERE chat_id = %s",
+            (int(str(chat_id)),)
+        )
+        user = cursor.fetchone()
+        if user is None:
+            raise RuntimeError(f"Usuario no encontrado para chat_id={chat_id}")
+
+        cursor.execute(
+            "INSERT INTO telegram_messages (user_id, message) VALUES (%s, %s)",
+            (user[0], text)
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -174,7 +217,7 @@ def get_all_telegram_users():
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT chat_id, username, first_name, last_name, is_admin, notifications_enabled
+            SELECT id, chat_id, username, first_name, last_name, is_admin, notifications_enabled
             FROM telegram_subscribers
             ORDER BY chat_id
             """
@@ -411,7 +454,6 @@ def configure_telegram_commands():
         response.raise_for_status()
         if not response.json().get("ok"):
             raise RuntimeError("Telegram rechazó la configuración del menú")
-        print("Menú de comandos de Telegram configurado")
     except Exception as error:
         print("No se pudo configurar el menú de Telegram:", error)
 
@@ -457,7 +499,18 @@ def process_telegram_commands():
         sender_name = " ".join(part for part in [first_name, last_name] if part).strip() or "sin nombre"
         sender_label = f"{username} | {sender_name}"
 
+        if not text.lstrip().startswith("/"):
+            print(
+                f"Mensaje recibido de {sender_label} (chat_id={chat_id}): {text!r}",
+                flush=True
+            )
         ensure_telegram_user(chat_id, sender)
+
+        if text.strip() and not text.lstrip().startswith("/"):
+            try:
+                save_telegram_message(chat_id, text)
+            except Exception as error:
+                print("Error guardando mensaje de Telegram:", error)
 
         if command == "/START":
             start_text = (
@@ -497,13 +550,13 @@ def process_telegram_commands():
                 continue
 
             lines = ["📋 Usuarios registrados:"]
-            for active_chat_id, username, first_name, last_name, is_admin, notifications_enabled in users:
+            for user_id, active_chat_id, username, first_name, last_name, is_admin, notifications_enabled in users:
                 full_name = " ".join(part for part in [first_name, last_name] if part).strip()
                 user_label = f"@{username}" if username else "sin username"
                 if full_name:
                     user_label += f" ({full_name})"
                 lines.append(
-                    f"- {user_label} | {active_chat_id} | "
+                    f"- ID: {user_id} | {user_label} | chat_id: {active_chat_id} | "
                     f"Admin: {'Sí' if is_admin else 'No'} | "
                     f"Alertas: {'Sí' if notifications_enabled else 'No'}"
                 )
@@ -680,6 +733,7 @@ def main():
     configure_telegram_commands()
     ensure_alert_config_table()
     ensure_subscriber_table()
+    ensure_message_table()
     load_telegram_subscribers()
     try:
         job()
