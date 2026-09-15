@@ -1,4 +1,25 @@
 # controler
+
+## Versión 1.0.0
+
+### Novedades respecto a la versión anterior
+
+Esta es la primera versión documentada del proyecto. Incluye:
+
+- Configuración de criptomonedas, mínimos, máximos y estado de alertas desde MySQL.
+- Consulta dinámica de las criptomonedas configuradas en `crypto_alert_configs`.
+- Comandos `/start`, `/help`, `/activar`, `/desactivar`, `/lista`, `/suscribir` y `/desuscribir`.
+- `/lista` muestra todos los usuarios registrados, su identificador, permisos de administrador y estado de alertas.
+- Alertas de precio enviadas cada minuto, con registro separado de envíos correctos y fallidos.
+- Visor web para consultar tablas MySQL desde el navegador.
+- Gestión de errores para que un usuario de Telegram inválido no bloquee las alertas de los demás.
+
+### Cambios de base de datos
+
+- Se utiliza `crypto_alert_configs` para configurar las alertas sin modificar el código.
+- La tabla contiene `name`, `min_price`, `max_price` y `enabled`.
+- `crypto_prices` conserva el histórico de precios consultados.
+
 ## functions
 Bot de Telegram para consultar precios de criptomonedas, guardarlos en MySQL y enviar alertas cuando se superan los umbrales configurados.
 
@@ -6,14 +27,14 @@ Bot de Telegram para consultar precios de criptomonedas, guardarlos en MySQL y e
 
 - Consulta precios en EUR desde CoinGecko.
 - Guarda cada consulta en la tabla `crypto_prices`.
-- Ejecuta el trabajo de precios cada 30 segundos.
+- Ejecuta el trabajo de precios cada minuto.
 - Registra en MySQL a cualquier usuario que escriba al bot.
 - Guarda `username`, nombre y apellidos de cada usuario.
 - Mantiene los permisos y el estado de las notificaciones en MySQL.
 - Crea automáticamente las tablas necesarias si no existen.
 - Evita iniciar una segunda instancia del bot desde `start.sh`.
 
-Actualmente las alertas están activas para `bitcoin` y `bitcoin-cash`. Ethereum tiene umbrales definidos en el código, pero no está incluido en la lista activa de alertas.
+Los nombres de las criptomonedas, sus umbrales y el estado de las alertas se configuran exclusivamente en MySQL.
 
 ## Requisitos
 
@@ -40,6 +61,18 @@ chmod +x start.sh
 ```
 
 `start.sh` instala las dependencias y no inicia otra instancia si ya encuentra un proceso ejecutando `python3 app/main.py`.
+
+## Visor web de la base de datos
+
+Puedes abrir un visor sin registro para consultar tablas MySQL:
+
+```bash
+python3 app/db_viewer.py
+```
+
+Después abre `http://127.0.0.1:5000`. Introduce la dirección, puerto, usuario, contraseña y base de datos. El visor solo ejecuta consultas de lectura y muestra como máximo 200 filas por tabla. Las credenciales se mantienen únicamente en memoria durante la sesión y no se guardan en disco.
+
+No expongas este visor directamente a Internet sin añadir autenticación y HTTPS. Para usarlo desde otro equipo, configura `WEB_HOST=0.0.0.0` y protégelo mediante un proxy seguro o una red privada.
 
 ## Configuración
 
@@ -70,6 +103,27 @@ El bot crea automáticamente estas tablas:
 ### `crypto_prices`
 
 Guarda el nombre de la criptomoneda, su precio y la fecha de consulta.
+
+### `crypto_alert_configs`
+
+Guarda la configuración de las alertas por criptomoneda. El bot crea la tabla vacía si no existe. Añade las criptomonedas que quieras consultar y alertar:
+
+```sql
+INSERT INTO crypto_alert_configs (name, min_price, max_price, enabled)
+VALUES
+	('bitcoin', 60000, 70000, 1),
+	('ethereum', 3000, 3500, 0),
+	('bitcoin-cash', 350, 400, 1);
+```
+
+```sql
+SELECT name, min_price, max_price, enabled
+FROM crypto_alert_configs;
+
+UPDATE crypto_alert_configs
+SET min_price = 60000, max_price = 70000, enabled = 1
+WHERE name = 'bitcoin';
+```
 
 ### `telegram_subscribers`
 
@@ -112,15 +166,16 @@ WHERE chat_id = 123456789;
 
 ### Todos los usuarios
 
-- `/start`: muestra los comandos disponibles.
-- `SI` o `SÍ`: activa las alertas.
-- `NO`: desactiva las alertas, pero conserva al usuario en la base de datos.
+- `/start`: explica brevemente el funcionamiento del bot.
+- `/help`: muestra los comandos disponibles.
+- `/activar`: activa las alertas.
+- `/desactivar`: desactiva las alertas, pero conserva al usuario en la base de datos.
 
 ### Administradores (`is_admin = 1`)
 
-- `LISTA`: muestra los usuarios activos y sus datos identificativos.
-- `SUSCRIBIR <chat_id>`: activa las alertas para un chat.
-- `DESUSCRIBIR <chat_id>`: desactiva las alertas de un chat sin borrar su registro.
+- `/lista`: muestra todos los usuarios registrados, sus datos identificativos y sus estados de administrador y alertas.
+- `/suscribir <chat_id>`: activa las alertas para un chat.
+- `/desuscribir <chat_id>`: desactiva las alertas de un chat sin borrar su registro.
 
 Los mensajes distintos de estos comandos se registran en MySQL, pero no reciben respuesta del bot.
 

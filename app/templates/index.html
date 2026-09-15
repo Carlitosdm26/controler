@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Database Lens</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --ink: #17242b;
+            --muted: #66757c;
+            --line: #d7e0df;
+            --paper: #f5f7f3;
+            --panel: #ffffff;
+            --accent: #d95f39;
+            --accent-dark: #a84227;
+            --teal: #1e7775;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--ink);
+            background: radial-gradient(circle at 90% 0%, #d8e8df 0, transparent 34%), var(--paper);
+            font-family: Georgia, "Times New Roman", serif;
+        }
+        .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0; }
+        header { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 28px; }
+        .eyebrow { color: var(--accent); font: 700 12px/1.2 Arial, sans-serif; letter-spacing: 2px; text-transform: uppercase; }
+        h1 { margin: 8px 0 0; font-size: clamp(36px, 6vw, 72px); line-height: .92; font-weight: 500; }
+        .intro { max-width: 410px; color: var(--muted); font: 15px/1.5 Arial, sans-serif; }
+        .layout { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+        .panel { background: var(--panel); border: 1px solid var(--line); box-shadow: 0 16px 36px #243c3810; }
+        .connect { padding: 22px; }
+        .connect h2, .data h2 { margin: 0 0 18px; font-size: 24px; font-weight: 500; }
+        label { display: block; margin: 14px 0 6px; color: var(--muted); font: 700 11px Arial, sans-serif; letter-spacing: .8px; text-transform: uppercase; }
+        input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink); background: #fbfcfa; font: 14px Arial, sans-serif; }
+        input:focus { outline: 2px solid #d5a18c; border-color: var(--accent); }
+        button { width: 100%; margin-top: 20px; padding: 12px 14px; border: 0; border-radius: 3px; color: white; background: var(--accent); cursor: pointer; font: 700 13px Arial, sans-serif; }
+        button:hover { background: var(--accent-dark); }
+        .disconnect { margin-top: 10px; color: var(--teal); background: transparent; border: 1px solid var(--line); }
+        .disconnect:hover { color: white; background: var(--teal); }
+        .tables { padding: 22px; }
+        .tables ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+        .tables a { display: block; padding: 11px 12px; color: var(--teal); border-left: 3px solid transparent; background: #f5f8f5; font: 14px Arial, sans-serif; text-decoration: none; }
+        .tables a:hover, .tables a.active { border-left-color: var(--accent); background: #fff1eb; }
+        .data { min-height: 360px; padding: 26px; overflow: hidden; }
+        .data-head { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+        .data-head span { color: var(--muted); font: 12px Arial, sans-serif; }
+        .empty { display: grid; place-items: center; min-height: 260px; color: var(--muted); text-align: center; font: 15px/1.5 Arial, sans-serif; }
+        .empty strong { display: block; margin-bottom: 7px; color: var(--ink); font: 20px Georgia, serif; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font: 13px Arial, sans-serif; }
+        th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+        th { color: var(--muted); background: #f5f8f5; font-size: 11px; letter-spacing: .6px; text-transform: uppercase; }
+        .flash { margin-bottom: 18px; padding: 12px 14px; color: #8c321c; border: 1px solid #efb8a6; background: #fff1eb; font: 13px Arial, sans-serif; }
+        @media (max-width: 760px) {
+            .shell { padding: 24px 0; }
+            header { display: block; }
+            .intro { margin-top: 18px; }
+            .layout { grid-template-columns: 1fr; }
+            .data { min-height: 260px; padding: 18px; }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <header>
+            <div><div class="eyebrow">Private utility</div><h1>Database Lens</h1></div>
+            <p class="intro">Consulta tablas MySQL desde el navegador. Las credenciales se usan solo para esta sesión y nunca se guardan en el servidor.</p>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}<div class="flash">{{ message }}</div>{% endfor %}
+        {% endwith %}
+
+        <section class="layout">
+            <aside>
+                <form class="panel connect" method="post">
+                    <h2>Conectar</h2>
+                    <label for="host">Dirección</label>
+                    <input id="host" name="host" placeholder="mysql.example.com" required>
+                    <label for="port">Puerto</label>
+                    <input id="port" name="port" value="3306" inputmode="numeric" required>
+                    <label for="user">Usuario</label>
+                    <input id="user" name="user" required>
+                    <label for="password">Contraseña</label>
+                    <input id="password" name="password" type="password">
+                    <label for="database">Base de datos</label>
+                    <input id="database" name="database" required>
+                    <button type="submit">Conectar y ver tablas</button>
+                </form>
+                {% if tables %}
+                    <div class="panel tables">
+                        <h2>Tablas</h2>
+                        <ul>
+                            {% for table in tables %}
+                                <li><a class="{% if table == selected_table %}active{% endif %}" href="{{ url_for('show_table', table_name=table) }}">{{ table }}</a></li>
+                            {% endfor %}
+                        </ul>
+                        <form method="post" action="{{ url_for('disconnect') }}"><button class="disconnect" type="submit">Desconectar</button></form>
+                    </div>
+                {% endif %}
+            </aside>
+
+            <section class="panel data">
+                {% if selected_table %}
+                    <div class="data-head"><h2>{{ selected_table }}</h2><span>Máximo {{ max_rows }} filas</span></div>
+                    <div class="table-wrap">
+                        <table><thead><tr>{% for column in columns %}<th>{{ column }}</th>{% endfor %}</tr></thead>
+                            <tbody>{% for row in rows %}<tr>{% for value in row %}<td>{{ value if value is not none else "NULL" }}</td>{% endfor %}</tr>{% else %}<tr><td>La tabla no tiene datos.</td></tr>{% endfor %}</tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="empty"><div><strong>Tu base de datos, a la vista.</strong>Introduce los datos de conexión para cargar las tablas.</div></div>
+                {% endif %}
+            </section>
+        </section>
+    </main>
+</body>
+</html>
